@@ -141,6 +141,10 @@
   <ItemGroup>
     <ClCompile Include="..\glew-2.1.0\src\glew.c" />
     <ClCompile Include="Computer graphics.cpp" />
+    <ClCompile Include="src\ShaderLoader.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\ShaderLoader.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
