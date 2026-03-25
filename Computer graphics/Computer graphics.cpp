@@ -1,27 +1,85 @@
 ﻿// Подключение заголовочных файлов
-// Важно: glew.h подключается до glfw.h
 #include <GL/glew.h>   // Библиотека для управления расширениями OpenGL
 #include <GLFW/glfw3.h> // Библиотека для создания окна и контекста OpenGL
 
 #include <iostream>    // Для вывода сообщений в консоль
 #include <cmath>       // Для математических функций (sin, cos)
+#include <glm/glm.hpp> // Библиотека для работы с векторами и матрицами
+#include <glm/gtc/matrix_transform.hpp> // Функции для создания матриц (perspective, lookAt)
+#include <glm/gtc/type_ptr.hpp> // Для передачи матриц в шейдер (value_ptr)
 
-// Функция для обработки ошибок GLFW (полезна для отладки)
+// Глобальные переменные для управления камерой
+glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);   // Позиция камеры
+glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f); // Направление камеры
+glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);     // Вектор "вверх"
+
+// Углы Эйлера для управления направлением камеры
+float yaw = -90.0f;   // Рыскание (поворот вокруг оси Y)
+float pitch = 0.0f;   // Тангаж (поворот вокруг оси X)
+float lastX = 400.0f; // Последняя позиция мыши по X (ширина окна / 2)
+float lastY = 300.0f; // Последняя позиция мыши по Y (высота окна / 2)
+bool firstMouse = true; // Флаг первого движения мыши
+
+// Скорость движения камеры
+float cameraSpeed = 0.05f;
+float mouseSensitivity = 0.1f; // Чувствительность мыши
+
+// Функция для обработки ошибок GLFW
 static void glfwErrorCallback(int error, const char* description) {
     std::cerr << "Ошибка GLFW: " << error << " - " << description << std::endl;
 }
 
-// Вершинный шейдер (GLSL)
+// Функция для обработки движения мыши
+void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+    if (firstMouse) {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+    }
+
+    // Вычисляем смещение мыши
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos; // Инвертируем, так как Y увеличивается снизу вверх
+    lastX = xpos;
+    lastY = ypos;
+
+    // Применяем чувствительность
+    xoffset *= mouseSensitivity;
+    yoffset *= mouseSensitivity;
+
+    // Обновляем углы Эйлера
+    yaw += xoffset;
+    pitch += yoffset;
+
+    // Ограничиваем угол тангажа, чтобы избежать переворота камеры
+    if (pitch > 89.0f)
+        pitch = 89.0f;
+    if (pitch < -89.0f)
+        pitch = -89.0f;
+
+    // Вычисляем новый вектор направления камеры
+    glm::vec3 front;
+    front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+    front.y = sin(glm::radians(pitch));
+    front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    cameraFront = glm::normalize(front);
+}
+
+// Вершинный шейдер с поддержкой матриц
 const char* vertexShaderSource = R"(
 #version 460 core
 layout (location = 0) in vec3 aPos;
 
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
 void main() {
-    gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
 }
 )";
 
-// Фрагментный шейдер (GLSL) с uniform переменной для цвета
+// Фрагментный шейдер с uniform переменной для цвета
 const char* fragmentShaderSource = R"(
 #version 460 core
 out vec4 FragColor;
@@ -38,7 +96,6 @@ GLuint compileShader(GLenum type, const char* source) {
     glShaderSource(shader, 1, &source, NULL);
     glCompileShader(shader);
 
-    // Проверка на ошибки компиляции
     int success;
     char infoLog[512];
     glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
@@ -65,7 +122,6 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
     glAttachShader(program, fragmentShader);
     glLinkProgram(program);
 
-    // Проверка на ошибки линковки
     int success;
     char infoLog[512];
     glGetProgramiv(program, GL_LINK_STATUS, &success);
@@ -75,11 +131,35 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
         return 0;
     }
 
-    // Шейдеры можно удалить после линковки
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
     return program;
+}
+
+// Функция для обработки ввода с клавиатуры
+void processInput(GLFWwindow* window) {
+    // Движение вперед/назад
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        cameraPos += cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        cameraPos -= cameraSpeed * cameraFront;
+
+    // Движение влево/вправо (используем векторное произведение для получения правого вектора)
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+
+    // Движение вверх/вниз
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+        cameraPos += cameraSpeed * cameraUp;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
+        cameraPos -= cameraSpeed * cameraUp;
+
+    // Выход по клавише ESC
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, true);
 }
 
 int main() {
@@ -99,7 +179,7 @@ int main() {
     // 3. Создание окна и контекста
     const int windowWidth = 800;
     const int windowHeight = 600;
-    GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "Variant 19 - VBO VAO EBO", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "Variant 19 - Camera Movement", NULL, NULL);
 
     if (!window) {
         std::cerr << "Не удалось создать окно GLFW" << std::endl;
@@ -109,6 +189,10 @@ int main() {
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
+
+    // Настройка обработчиков ввода
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED); // Скрываем курсор и захватываем его
+    glfwSetCursorPosCallback(window, mouseCallback); // Устанавливаем обработчик движения мыши
 
     // 4. Инициализация GLEW
     glewExperimental = GL_TRUE;
@@ -124,9 +208,7 @@ int main() {
     std::cout << "Рендерер: " << glGetString(GL_RENDERER) << std::endl;
     std::cout << "Версия OpenGL: " << glGetString(GL_VERSION) << std::endl;
 
-    // 5. Данные вершин для треугольника (3 вершины)
-    // Для создания двух треугольников (квадрата) нужно 4 вершины и 6 индексов
-    // Но по заданию используем треугольник
+    // 5. Данные вершин для треугольника
     float vertices[] = {
         // Координаты вершин
          0.0f,  0.5f, 0.0f,  // Верхняя вершина
@@ -134,7 +216,7 @@ int main() {
          0.5f, -0.5f, 0.0f   // Нижняя правая
     };
 
-    // Индексы для EBO (для треугольника достаточно 3 индекса)
+    // Индексы для EBO
     unsigned int indices[] = {
         0, 1, 2   // Треугольник из вершин 0, 1, 2
     };
@@ -142,31 +224,23 @@ int main() {
     // 6. Создание VAO, VBO, EBO
     GLuint VAO, VBO, EBO;
 
-    // Генерация объектов
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
     glGenBuffers(1, &EBO);
 
-    // Настройка VAO
     glBindVertexArray(VAO);
 
-    // Настройка VBO
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    // Настройка EBO
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-    // Настройка атрибутов вершин
-    // Атрибут позиции (location = 0)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // Отвязываем буферы (необязательно, но полезно для предотвращения случайных изменений)
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
-    // EBO остается привязанным к VAO
 
     // 7. Создание шейдерной программы
     GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
@@ -180,53 +254,67 @@ int main() {
         return -1;
     }
 
-    // 8. Основной цикл рендеринга
-    // Цвет фона по варианту 19: (1.0, 1.0, 1.0) - белый
-    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    // 8. Получение расположения uniform переменных
+    int modelLoc = glGetUniformLocation(shaderProgram, "model");
+    int viewLoc = glGetUniformLocation(shaderProgram, "view");
+    int projLoc = glGetUniformLocation(shaderProgram, "projection");
+    int colorLoc = glGetUniformLocation(shaderProgram, "ourColor");
 
-    // Получаем расположение uniform переменной в шейдере
-    int colorLocation = glGetUniformLocation(shaderProgram, "ourColor");
+    // 9. Создание матриц
+    glm::mat4 model = glm::mat4(1.0f); // Модельная матрица (единичная, без трансформаций)
+
+    // Матрица проекции (перспективная)
+    glm::mat4 projection = glm::perspective(
+        glm::radians(45.0f),              // Угол обзора (field of view)
+        (float)windowWidth / (float)windowHeight, // Соотношение сторон
+        0.1f,                             // Ближняя плоскость отсечения
+        100.0f                            // Дальняя плоскость отсечения
+    );
+
+    // 10. Основной цикл рендеринга
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f); // Белый фон
 
     while (!glfwWindowShouldClose(window)) {
-        // a) Очистка старого кадра
+        // Обработка ввода с клавиатуры
+        processInput(window);
+
+        // Очистка экрана
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // b) Анимация цвета через uniform переменную
-        // Получаем текущее время
+        // Анимация цвета через uniform переменную
         float timeValue = glfwGetTime();
+        float red = 0.3f + 0.7f * (sin(timeValue) * 0.5f + 0.5f);
+        float green = 1.0f;
+        float blue = 1.0f;
 
-        // Рассчитываем цвет в зависимости от времени
-        // Используем синусоидальные функции для плавного изменения цветов
-        // Вариант 19: базовый цвет (0.3, 1.0, 1.0) - бирюзовый, но с анимацией
-        float red = 0.3f + 0.7f * (sin(timeValue) * 0.5f + 0.5f);     // Изменяется от 0.3 до 1.0
-        float green = 1.0f;                                           // Зеленый остается максимальным
-        float blue = 1.0f;                                            // Синий остается максимальным
-
-        // Альтернативный вариант с полным циклом изменения цветов:
-        // float red = (sin(timeValue) + 1.0f) / 2.0f;
-        // float green = (sin(timeValue + 2.0f) + 1.0f) / 2.0f;
-        // float blue = (sin(timeValue + 4.0f) + 1.0f) / 2.0f;
+        // Создаем матрицу вида (view matrix) с использованием LookAt
+        glm::mat4 view = glm::lookAt(
+            cameraPos,                    // Позиция камеры
+            cameraPos + cameraFront,      // Точка, на которую смотрит камера
+            cameraUp                      // Вектор "вверх"
+        );
 
         // Используем шейдерную программу
         glUseProgram(shaderProgram);
 
-        // Передаем цвет во фрагментный шейдер через uniform переменную
-        glUniform4f(colorLocation, red, green, blue, 1.0f);
+        // Передаем матрицы в шейдер
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-        // c) Отрисовка треугольника с использованием VAO и EBO
+        // Передаем цвет во фрагментный шейдер
+        glUniform4f(colorLoc, red, green, blue, 1.0f);
+
+        // Отрисовка треугольника
         glBindVertexArray(VAO);
-        // Используем glDrawElements для отрисовки по индексам
         glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, 0);
-        // glBindVertexArray(0); // Необязательно, так как следующий кадр снова привяжет VAO
 
-        // d) Смена кадров (двойная буферизация)
+        // Смена кадров и обработка событий
         glfwSwapBuffers(window);
-
-        // e) Обработка событий
         glfwPollEvents();
     }
 
-    // 9. Завершение работы: освобождение ресурсов
+    // 11. Завершение работы: освобождение ресурсов
     glDeleteProgram(shaderProgram);
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);
