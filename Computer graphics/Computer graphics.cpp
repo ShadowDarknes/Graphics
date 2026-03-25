@@ -1,524 +1,324 @@
-﻿// Подключение заголовочных файлов
-#include <GL/glew.h>   // Библиотека для управления расширениями OpenGL
-#include <GLFW/glfw3.h> // Библиотека для создания окна и контекста OpenGL
+﻿#define _CRT_SECURE_NO_WARNINGS
 
-#include <iostream>    // Для вывода сообщений в консоль
-#include <cmath>       // Для математических функций (sin, cos)
-#include <vector>      // Для работы с векторами
-#include <string>      // Для работы со строками
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <fstream>
+#include <algorithm>
+#include <direct.h>
 
-
-#include <glm/glm.hpp> // Библиотека для работы с векторами и матрицами
-#include <glm/gtc/matrix_transform.hpp> // Функции для создания матриц
-#include <glm/gtc/type_ptr.hpp> // Для передачи матриц в шейдер
-
-#include <assimp/Importer.hpp>      // Импортер моделей Assimp
-#include <assimp/scene.h>           // Структура сцены Assimp
-#include <assimp/postprocess.h>     // Постобработка импортированных данных
-
-
-// Отключаем предупреждения о преобразовании double в float для Assimp
-#pragma warning(disable: 4244)
-
-// Структура вершины для OpenGL
 struct Vertex {
-    glm::vec3 Position;   // Позиция вершины
-    glm::vec3 Normal;     // Нормаль вершины
-
-    Vertex() : Position(glm::vec3(0.0f)), Normal(glm::vec3(0.0f)) {}
-    Vertex(glm::vec3 pos, glm::vec3 norm) : Position(pos), Normal(norm) {}
+    float x, y, z;
+    float r, g, b;
 };
 
-// Класс Mesh для хранения и рендеринга одной сетки
-class Mesh {
-public:
-    std::vector<Vertex> vertices;      // Вершины
-    std::vector<unsigned int> indices; // Индексы
-    unsigned int VAO, VBO, EBO;        // OpenGL буферы
+std::vector<Vertex> loadOBJ(const std::string& path) {
+    std::vector<Vertex> vertices;
+    std::ifstream file(path);
 
-    // Конструктор
-    Mesh(std::vector<Vertex> verts, std::vector<unsigned int> inds) {
-        vertices = verts;
-        indices = inds;
-        setupMesh();
+    if (!file.is_open()) {
+        std::cout << "Не удалось открыть файл: " << path << std::endl;
+        return vertices;
     }
 
-    // Настройка буферов OpenGL
-    void setupMesh() {
-        glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-        glGenBuffers(1, &EBO);
-
-        glBindVertexArray(VAO);
-
-        // Загрузка данных вершин в VBO
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), &vertices[0], GL_STATIC_DRAW);
-
-        // Загрузка индексов в EBO
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
-
-        // Настройка атрибута позиции (location = 0)
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Position));
-        glEnableVertexAttribArray(0);
-
-        // Настройка атрибута нормали (location = 1)
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Normal));
-        glEnableVertexAttribArray(1);
-
-        glBindVertexArray(0);
-    }
-
-    // Отрисовка сетки
-    void Draw() {
-        glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-
-    // Деструктор для очистки памяти
-    ~Mesh() {
-        glDeleteVertexArrays(1, &VAO);
-        glDeleteBuffers(1, &VBO);
-        glDeleteBuffers(1, &EBO);
-    }
-};
-
-// Класс Model для загрузки и управления всей моделью
-class Model {
-public:
-    std::vector<Mesh> meshes;  // Вектор всех сеток модели
-    std::string directory;     // Директория модели
-    bool gammaCorrection;      // Коррекция гаммы
-
-    // Конструктор
-    Model(const std::string& path, bool gamma = false) : gammaCorrection(gamma) {
-        loadModel(path);
-    }
-
-    // Отрисовка всей модели
-    void Draw() {
-        for (unsigned int i = 0; i < meshes.size(); i++) {
-            meshes[i].Draw();
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.substr(0, 2) == "v ") {
+            float x, y, z;
+            sscanf_s(line.c_str(), "v %f %f %f", &x, &y, &z);
+            // Металлический цвет для робота
+            vertices.push_back({ x, y, z, 0.7f, 0.7f, 0.8f });
         }
     }
 
-private:
-    // Загрузка модели через Assimp
-    void loadModel(const std::string& path) {
-        Assimp::Importer importer;
-        const aiScene* scene = importer.ReadFile(path,
-            aiProcess_Triangulate |           // Преобразование всех полигонов в треугольники
-            aiProcess_FlipUVs |                // Переворот UV координат (для OpenGL)
-            aiProcess_CalcTangentSpace |       // Вычисление касательных и бикасательных
-            aiProcess_GenNormals |             // Генерация нормалей, если их нет
-            aiProcess_JoinIdenticalVertices |  // Объединение идентичных вершин
-            aiProcess_OptimizeMeshes);         // Оптимизация мешей
-
-        // Проверка на ошибки загрузки
-        if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-            std::cerr << "Ошибка загрузки модели: " << importer.GetErrorString() << std::endl;
-            return;
-        }
-
-        // Получение директории модели
-        size_t lastSlash = path.find_last_of('/');
-        if (lastSlash == std::string::npos) {
-            lastSlash = path.find_last_of('\\');
-        }
-        if (lastSlash != std::string::npos) {
-            directory = path.substr(0, lastSlash);
-        }
-        else {
-            directory = "";
-        }
-
-        // Обработка узлов сцены
-        processNode(scene->mRootNode, scene);
-
-        std::cout << "Модель успешно загружена. Количество мешей: " << meshes.size() << std::endl;
-        if (meshes.size() > 0) {
-            std::cout << "Количество вершин в первом меше: " << meshes[0].vertices.size() << std::endl;
-            std::cout << "Количество индексов в первом меше: " << meshes[0].indices.size() << std::endl;
-        }
-    }
-
-    // Рекурсивная обработка узлов сцены
-    void processNode(aiNode* node, const aiScene* scene) {
-        // Обработка всех мешей текущего узла
-        for (unsigned int i = 0; i < node->mNumMeshes; i++) {
-            aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
-            meshes.push_back(processMesh(mesh, scene));
-        }
-
-        // Рекурсивная обработка дочерних узлов
-        for (unsigned int i = 0; i < node->mNumChildren; i++) {
-            processNode(node->mChildren[i], scene);
-        }
-    }
-
-    // Обработка отдельного меша
-    Mesh processMesh(aiMesh* mesh, const aiScene* scene) {
-        std::vector<Vertex> vertices;
-        std::vector<unsigned int> indices;
-
-        // Резервируем память для оптимизации
-        vertices.reserve(mesh->mNumVertices);
-
-        // Обработка вершин с явным преобразованием double в float
-        for (unsigned int i = 0; i < mesh->mNumVertices; i++) {
-            Vertex vertex;
-
-            // Позиция вершины - явное преобразование в float
-            vertex.Position.x = static_cast<float>(mesh->mVertices[i].x);
-            vertex.Position.y = static_cast<float>(mesh->mVertices[i].y);
-            vertex.Position.z = static_cast<float>(mesh->mVertices[i].z);
-
-            // Нормаль вершины - явное преобразование в float
-            if (mesh->HasNormals()) {
-                vertex.Normal.x = static_cast<float>(mesh->mNormals[i].x);
-                vertex.Normal.y = static_cast<float>(mesh->mNormals[i].y);
-                vertex.Normal.z = static_cast<float>(mesh->mNormals[i].z);
-            }
-            else {
-                vertex.Normal = glm::vec3(0.0f, 1.0f, 0.0f); // Если нет нормалей, используем (0,1,0)
-            }
-
-            vertices.push_back(vertex);
-        }
-
-        // Резервируем память для индексов
-        indices.reserve(mesh->mNumFaces * 3);
-
-        // Обработка индексов (треугольников)
-        for (unsigned int i = 0; i < mesh->mNumFaces; i++) {
-            aiFace face = mesh->mFaces[i];
-            // Проверка, что грань содержит 3 индекса (треугольник)
-            if (face.mNumIndices == 3) {
-                for (unsigned int j = 0; j < face.mNumIndices; j++) {
-                    indices.push_back(static_cast<unsigned int>(face.mIndices[j]));
-                }
-            }
-            else {
-                std::cerr << "Предупреждение: обнаружена грань с " << face.mNumIndices << " индексами" << std::endl;
-            }
-        }
-
-        return Mesh(vertices, indices);
-    }
-};
-
-// Глобальные переменные для управления камерой
-glm::vec3 cameraPos = glm::vec3(0.0f, 2.0f, 8.0f);   // Позиция камеры (увеличил для робота)
-glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f); // Направление камеры
-glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);     // Вектор "вверх"
-
-// Углы Эйлера для управления направлением камеры
-float yaw = -90.0f;   // Рыскание (поворот вокруг оси Y)
-float pitch = 0.0f;   // Тангаж (поворот вокруг оси X)
-float lastX = 400.0f; // Последняя позиция мыши по X
-float lastY = 300.0f; // Последняя позиция мыши по Y
-bool firstMouse = true; // Флаг первого движения мыши
-
-// Скорость движения камеры
-float cameraSpeed = 0.1f;   // Увеличил скорость для удобства
-float mouseSensitivity = 0.1f; // Чувствительность мыши
-
-// Функция для обработки ошибок GLFW
-static void glfwErrorCallback(int error, const char* description) {
-    std::cerr << "Ошибка GLFW: " << error << " - " << description << std::endl;
+    file.close();
+    std::cout << "Загружено вершин из OBJ: " << vertices.size() << std::endl;
+    return vertices;
 }
 
-// Функция для обработки движения мыши
-void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+std::string getCurrentDirectory() {
+    char buffer[1024];
+    if (_getcwd(buffer, sizeof(buffer)) != NULL) {
+        return std::string(buffer);
+    }
+    return "unknown";
+}
+
+// ------------------- CAMERA -------------------
+glm::vec3 cameraPos = glm::vec3(0.0f, 1.5f, 4.0f);  // Подняли камеру для лучшего обзора
+glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+float yaw = -90.0f;
+float pitch = 0.0f;
+float lastX = 400.0f;
+float lastY = 300.0f;
+bool firstMouse = true;
+float deltaTime = 0.0f;
+float lastFrame = 0.0f;
+
+void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if (firstMouse) {
-        lastX = static_cast<float>(xpos);
-        lastY = static_cast<float>(ypos);
+        lastX = (float)xpos;
+        lastY = (float)ypos;
         firstMouse = false;
     }
 
-    float xoffset = static_cast<float>(xpos) - lastX;
-    float yoffset = lastY - static_cast<float>(ypos); // Инвертируем
-    lastX = static_cast<float>(xpos);
-    lastY = static_cast<float>(ypos);
+    float xoffset = (float)xpos - lastX;
+    float yoffset = lastY - (float)ypos;
+    lastX = (float)xpos;
+    lastY = (float)ypos;
 
-    xoffset *= mouseSensitivity;
-    yoffset *= mouseSensitivity;
+    float sensitivity = 0.1f;
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
 
     yaw += xoffset;
     pitch += yoffset;
 
-    if (pitch > 89.0f)
-        pitch = 89.0f;
-    if (pitch < -89.0f)
-        pitch = -89.0f;
+    if (pitch > 89.0f) pitch = 89.0f;
+    if (pitch < -89.0f) pitch = -89.0f;
 
-    glm::vec3 front;
-    front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
-    front.y = sin(glm::radians(pitch));
-    front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-    cameraFront = glm::normalize(front);
+    glm::vec3 direction;
+    direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+    direction.y = sin(glm::radians(pitch));
+    direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    cameraFront = glm::normalize(direction);
 }
 
-// Вершинный шейдер с поддержкой матриц
-const char* vertexShaderSource = R"(
-#version 460 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aNormal;
-
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
-uniform vec3 lightDir;
-
-out vec3 Normal;
-out vec3 LightDir;
-
-void main() {
-    gl_Position = projection * view * model * vec4(aPos, 1.0);
-    
-    // Передаем нормаль и направление света во фрагментный шейдер
-    Normal = normalize(mat3(transpose(inverse(model))) * aNormal);
-    LightDir = normalize(lightDir);
-}
-)";
-
-// Фрагментный шейдер с простым освещением
-const char* fragmentShaderSource = R"(
-#version 460 core
-out vec4 FragColor;
-
-uniform vec3 objectColor;
-uniform vec3 lightColor;
-
-in vec3 Normal;
-in vec3 LightDir;
-
-void main() {
-    // Простое освещение по Ламберту
-    float diff = max(dot(Normal, LightDir), 0.0);
-    vec3 diffuse = diff * lightColor;
-    
-    // Ambient освещение
-    float ambientStrength = 0.3;
-    vec3 ambient = ambientStrength * lightColor;
-    
-    vec3 result = (ambient + diffuse) * objectColor;
-    FragColor = vec4(result, 1.0);
-}
-)";
-
-// Функция для компиляции шейдера
-GLuint compileShader(GLenum type, const char* source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, NULL);
-    glCompileShader(shader);
-
-    int success;
-    char infoLog[512];
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(shader, 512, NULL, infoLog);
-        std::cerr << "Ошибка компиляции шейдера: " << infoLog << std::endl;
-        return 0;
-    }
-
-    return shader;
-}
-
-// Функция для создания шейдерной программы
-GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource) {
-    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
-    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
-
-    if (vertexShader == 0 || fragmentShader == 0) {
-        return 0;
-    }
-
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vertexShader);
-    glAttachShader(program, fragmentShader);
-    glLinkProgram(program);
-
-    int success;
-    char infoLog[512];
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        glGetProgramInfoLog(program, 512, NULL, infoLog);
-        std::cerr << "Ошибка линковки программы: " << infoLog << std::endl;
-        return 0;
-    }
-
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    return program;
-}
-
-// Функция для обработки ввода с клавиатуры
 void processInput(GLFWwindow* window) {
+    float speed = 5.0f * deltaTime;
+    if (speed > 0.5f) speed = 0.5f;
+
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        cameraPos += cameraSpeed * cameraFront;
+        cameraPos += speed * cameraFront;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        cameraPos -= cameraSpeed * cameraFront;
+        cameraPos -= speed * cameraFront;
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+        cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * speed;
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+        cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * speed;
     if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-        cameraPos += cameraSpeed * cameraUp;
+        cameraPos += speed * cameraUp;
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
-        cameraPos -= cameraSpeed * cameraUp;
+        cameraPos -= speed * cameraUp;
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
-
-    // Дополнительные клавиши для увеличения/уменьшения скорости
-    if (glfwGetKey(window, GLFW_KEY_KP_ADD) == GLFW_PRESS)
-        cameraSpeed += 0.01f;
-    if (glfwGetKey(window, GLFW_KEY_KP_SUBTRACT) == GLFW_PRESS)
-        cameraSpeed -= 0.01f;
 }
 
 int main() {
-    // 1. Инициализация GLFW
-    glfwSetErrorCallback(glfwErrorCallback);
     if (!glfwInit()) {
-        std::cerr << "Не удалось инициализировать GLFW" << std::endl;
+        std::cout << "GLFW init failed\n";
         return -1;
     }
 
-    // 2. Настройка параметров окна для OpenGL 4.6 Core Profile
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    // 3. Создание окна и контекста
-    const int windowWidth = 800;
-    const int windowHeight = 600;
-    GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "KUKA KR 120 R3200 PA - Robot Arm", NULL, NULL);
-
+    GLFWwindow* window = glfwCreateWindow(800, 600, "KUKA KR 120 R3200 PA", NULL, NULL);
     if (!window) {
-        std::cerr << "Не удалось создать окно GLFW" << std::endl;
+        std::cout << "Window creation failed\n";
         glfwTerminate();
         return -1;
     }
 
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
-
-    // Настройка обработчиков ввода
+    glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    glfwSetCursorPosCallback(window, mouseCallback);
 
-    // 4. Инициализация GLEW
     glewExperimental = GL_TRUE;
-    GLenum glewError = glewInit();
-    if (glewError != GLEW_OK) {
-        std::cerr << "Не удалось инициализировать GLEW: " << glewGetErrorString(glewError) << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
+    if (glewInit() != GLEW_OK) {
+        std::cout << "GLEW init failed\n";
         return -1;
     }
 
-    // Выводим информацию об OpenGL
-    std::cout << "Рендерер: " << glGetString(GL_RENDERER) << std::endl;
-    std::cout << "Версия OpenGL: " << glGetString(GL_VERSION) << std::endl;
+    glViewport(0, 0, 800, 600);
+    glEnable(GL_DEPTH_TEST);
 
-    // 5. Загрузка 3D модели робота KUKA
+    // ВАЖНО: Отключаем отсечение задних граней, чтобы видеть все плоскости
+    glDisable(GL_CULL_FACE);
+    // Или можно включить двухстороннее освещение:
+    // glEnable(GL_CULL_FACE);
+    // glCullFace(GL_BACK);
+
+    std::cout << "OpenGL: " << glGetString(GL_VERSION) << std::endl;
+
+    // ========== ЗАГРУЗКА МОДЕЛИ ==========
     std::string modelPath = "17 KUKA KR 120 R3200 PA.obj";
-    std::cout << "Загрузка модели: " << modelPath << std::endl;
-    Model ourModel(modelPath);
+    std::cout << "\n=== ПОИСК МОДЕЛИ ===" << std::endl;
+    std::cout << "Текущая директория: " << getCurrentDirectory() << std::endl;
+    std::cout << "Путь к модели: " << modelPath << std::endl;
 
-    // 6. Создание шейдерной программы
-    GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
-    if (shaderProgram == 0) {
-        std::cerr << "Не удалось создать шейдерную программу" << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return -1;
+    std::vector<Vertex> modelVertices = loadOBJ(modelPath);
+
+    GLuint modelVAO = 0, modelVBO = 0;
+    bool modelLoaded = false;
+
+    if (!modelVertices.empty()) {
+        float minX = modelVertices[0].x, maxX = modelVertices[0].x;
+        float minY = modelVertices[0].y, maxY = modelVertices[0].y;
+        float minZ = modelVertices[0].z, maxZ = modelVertices[0].z;
+
+        for (const auto& v : modelVertices) {
+            minX = std::min(minX, v.x); maxX = std::max(maxX, v.x);
+            minY = std::min(minY, v.y); maxY = std::max(maxY, v.y);
+            minZ = std::min(minZ, v.z); maxZ = std::max(maxZ, v.z);
+        }
+
+        float centerX = (minX + maxX) / 2.0f;
+        float centerY = (minY + maxY) / 2.0f;
+        float centerZ = (minZ + maxZ) / 2.0f;
+
+        std::cout << "\n=== ИНФОРМАЦИЯ О МОДЕЛИ ===" << std::endl;
+        std::cout << "Вершин: " << modelVertices.size() << std::endl;
+        std::cout << "Размеры: " << maxX - minX << " x " << maxY - minY << " x " << maxZ - minZ << std::endl;
+        std::cout << "Центр модели: (" << centerX << ", " << centerY << ", " << centerZ << ")" << std::endl;
+
+        glGenVertexArrays(1, &modelVAO);
+        glGenBuffers(1, &modelVBO);
+
+        glBindVertexArray(modelVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, modelVBO);
+        glBufferData(GL_ARRAY_BUFFER, modelVertices.size() * sizeof(Vertex), modelVertices.data(), GL_STATIC_DRAW);
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+        glEnableVertexAttribArray(0);
+
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+
+        glBindVertexArray(0);
+
+        modelLoaded = true;
+        std::cout << "Модель загружена в GPU!" << std::endl;
+        std::cout << "==========================\n" << std::endl;
     }
 
-    // 7. Получение расположения uniform переменных
+    // ========== ШЕЙДЕРЫ ==========
+    const char* vertexShaderSource = R"(
+    #version 330 core
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in vec3 aColor;
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
+    out vec3 vertexColor;
+    void main() {
+        gl_Position = projection * view * model * vec4(aPos, 1.0);
+        vertexColor = aColor;
+    }
+    )";
+
+    const char* fragmentShaderSource = R"(
+    #version 330 core
+    out vec4 FragColor;
+    in vec3 vertexColor;
+    void main() {
+        FragColor = vec4(vertexColor, 1.0);
+    }
+    )";
+
+    unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glCompileShader(vertexShader);
+
+    unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glCompileShader(fragmentShader);
+
+    unsigned int shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
     int modelLoc = glGetUniformLocation(shaderProgram, "model");
     int viewLoc = glGetUniformLocation(shaderProgram, "view");
     int projLoc = glGetUniformLocation(shaderProgram, "projection");
-    int objectColorLoc = glGetUniformLocation(shaderProgram, "objectColor");
-    int lightColorLoc = glGetUniformLocation(shaderProgram, "lightColor");
-    int lightDirLoc = glGetUniformLocation(shaderProgram, "lightDir");
 
-    // 8. Создание матриц
-    glm::mat4 model = glm::mat4(1.0f);
+    glm::mat4 projection = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 100.0f);
 
-    // Масштабируем модель, если нужно (робот может быть слишком большим или маленьким)
-    float scale = 0.5f; // Подберите масштаб под вашу модель
-    model = glm::scale(model, glm::vec3(scale, scale, scale));
+    // ========== НАСТРОЙКА МОДЕЛИ ДЛЯ ПРАВИЛЬНОГО ОТОБРАЖЕНИЯ ==========
+    glm::mat4 modelMat = glm::mat4(1.0f);
 
-    // Матрица проекции (перспективная)
-    glm::mat4 projection = glm::perspective(
-        glm::radians(45.0f),
-        static_cast<float>(windowWidth) / static_cast<float>(windowHeight),
-        0.1f,
-        100.0f
-    );
+    // 1. МАСШТАБ - подбираем под размер экрана
+    float scale = 0.8f;  // Увеличиваем для лучшей видимости
+    modelMat = glm::scale(modelMat, glm::vec3(scale));
 
-    // Параметры освещения
-    glm::vec3 objectColor = glm::vec3(0.6f, 0.7f, 0.8f);  // Металлический серо-голубой цвет для робота
-    glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f);   // Белый свет
-    glm::vec3 lightDir = glm::normalize(glm::vec3(1.0f, 2.0f, 1.0f)); // Направление света сверху-сбоку
+    // 2. ПОВОРОТ - чтобы робот стоял вертикально и смотрел вперед
+    // Поворачиваем вокруг X, чтобы робот стоял на ногах (было 90, стало 0)
+    modelMat = glm::rotate(modelMat, glm::radians(0.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 
-    // 9. Настройка OpenGL
-    glEnable(GL_DEPTH_TEST); // Включение теста глубины для корректной отрисовки 3D объектов
-    glEnable(GL_CULL_FACE);  // Включение отсечения задних граней для оптимизации
-    glCullFace(GL_BACK);     // Отсекаем задние грани
+    // Поворачиваем вокруг Y, чтобы робот смотрел на камеру
+    modelMat = glm::rotate(modelMat, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
-    // 10. Основной цикл рендеринга
-    glClearColor(0.1f, 0.15f, 0.2f, 1.0f); // Темно-синий фон, похожий на промышленный
+    // 3. ЦЕНТРИРОВАНИЕ - смещаем модель в центр
+    // Из ваших данных центр примерно (0.66, 1.04, 0)
+    modelMat = glm::translate(modelMat, glm::vec3(-0.66f, -1.04f, 0.0f));
 
-    std::cout << "Начало рендеринга. Управление:" << std::endl;
-    std::cout << "WASD - перемещение камеры" << std::endl;
-    std::cout << "Space/Shift - вверх/вниз" << std::endl;
+    std::cout << "\n=== НАСТРОЙКИ ОТОБРАЖЕНИЯ ===" << std::endl;
+    std::cout << "Масштаб модели: " << scale << std::endl;
+    std::cout << "Поворот: 0° вокруг X, 180° вокруг Y" << std::endl;
+    std::cout << "Смещение для центрирования: (-0.66, -1.04, 0)" << std::endl;
+    std::cout << "Позиция камеры: (0, 1.5, 4)" << std::endl;
+    std::cout << "Режим отображения: показаны все плоскости (CULL_FACE OFF)" << std::endl;
+    std::cout << "============================\n" << std::endl;
+
+    std::cout << "\n=== УПРАВЛЕНИЕ ===" << std::endl;
+    std::cout << "WASD - движение камеры" << std::endl;
     std::cout << "Мышь - поворот камеры" << std::endl;
-    std::cout << "Num+ / Num- - изменение скорости камеры" << std::endl;
+    std::cout << "Space/Shift - вверх/вниз" << std::endl;
     std::cout << "ESC - выход" << std::endl;
+    std::cout << "================\n" << std::endl;
+
+    // ========== ОСНОВНОЙ ЦИКЛ ==========
+    int frameCount = 0;
 
     while (!glfwWindowShouldClose(window)) {
-        // Обработка ввода с клавиатуры
+        float currentFrame = (float)glfwGetTime();
+        deltaTime = currentFrame - lastFrame;
+        if (deltaTime > 0.1f) deltaTime = 0.1f;
+        lastFrame = currentFrame;
+
+        glfwPollEvents();
         processInput(window);
 
-        // Очистка экрана
+        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Создаем матрицу вида
-        glm::mat4 view = glm::lookAt(
-            cameraPos,
-            cameraPos + cameraFront,
-            cameraUp
-        );
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
 
-        // Используем шейдерную программу
         glUseProgram(shaderProgram);
-
-        // Передаем матрицы в шейдер
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
-        // Передаем параметры освещения в шейдер
-        glUniform3fv(objectColorLoc, 1, glm::value_ptr(objectColor));
-        glUniform3fv(lightColorLoc, 1, glm::value_ptr(lightColor));
-        glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDir));
+        if (modelLoaded) {
+            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(modelMat));
+            glBindVertexArray(modelVAO);
+            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)modelVertices.size());
 
-        // Отрисовка загруженной модели
-        ourModel.Draw();
+            if (frameCount % 60 == 0) {
+                std::cout << "Рисуем модель, вершин: " << modelVertices.size() << std::endl;
+            }
+        }
 
-        // Смена кадров и обработка событий
+        frameCount++;
         glfwSwapBuffers(window);
-        glfwPollEvents();
     }
 
-    // 11. Завершение работы
+    // Очистка
+    if (modelLoaded) {
+        glDeleteVertexArrays(1, &modelVAO);
+        glDeleteBuffers(1, &modelVBO);
+    }
     glDeleteProgram(shaderProgram);
     glfwDestroyWindow(window);
     glfwTerminate();
